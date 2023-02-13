@@ -1,0 +1,219 @@
+---
+- hosts: test
+  become: yes
+  tasks:
+  
+    - debug:
+        msg: "Starting ModeSec automation on {{inventory_hostname}}"
+
+    - name: install nginx
+      apt: name={{ item }}  state=latest
+      with_items:
+        - nginx
+      
+    - name: Check Nginx Version
+      become: yes
+      shell: nginx -v 2>&1 | awk -F '/' '{print $2}'
+      register: nginx_version
+
+    # - name: Check Nginx Version 1
+    #   become: yes
+    #   shell: nginx -v 2>&1 | awk -F '/' '{print $2}'
+    #   register: nginx_version_1
+
+    - debug:
+        msg: "nginx version is {{nginx_version}}"
+
+
+    - name: Download and install dependency
+      apt: name={{ item }} state=latest
+      with_items:
+        - apt-utils
+        - autoconf
+        - automake
+        - build-essential
+        - git
+        - libcurl4-openssl-dev
+        - libgeoip-dev
+        - liblmdb-dev
+        - libpcre++-dev
+        - libtool
+        - libxml2-dev 
+        - libyajl-dev
+        - pkgconf
+        - wget
+        - zlib1g-dev
+
+    - name: nginx service Start
+      service:
+        name: nginx
+        state: started
+
+    - name: cleanUP /opt file
+      shell: |
+        cd /opt
+        rm -rf ModSecurity-nginx nginx-{{ nginx_version }} nginx-{{ nginx_version }}.tar.gz
+        rm -rf ModSecurity
+        
+    - name: cleanUP /etc/nginx/modsec and modules file
+      shell: |
+        cd /etc/nginx/
+        rm -rf modsec modules 
+
+## ================ Nginx gpg verifications ============================
+
+    - name: Download Nginx .tar.asc file
+      get_url:
+        url: https://nginx.org/download/nginx-{{ nginx_version.stdout }}.tar.gz.asc
+        dest: /opt
+
+    - name: Download nginx tar file
+      get_url: 
+        url: https://nginx.org/download/nginx-{{ nginx_version.stdout }}.tar.gz
+        dest: /opt
+      
+    - name: Download and untar nginx file
+      unarchive:
+        src: https://nginx.org/download/nginx-{{ nginx_version.stdout }}.tar.gz
+        dest: /opt
+        remote_src: yes
+
+    - name: check RSA id
+      shell: |
+        cd /opt/
+        gpg nginx-{{ nginx_version.stdout }}.tar.gz.asc 2>&1 | awk -F 'ID' '{print $2}'
+        cd ~
+      register: gpg_id
+      
+    - debug: 
+        msg: "{{ gpg_id }}"
+
+    - name: gpg --recv-keys
+      shell: |
+        cd /opt/
+        gpg --recv-keys --keyserver keyserver.ubuntu.com {{ gpg_id.stdout }}
+        cd ~
+      register: mykeys
+
+    - debug:
+        msg: "{{ mykeys }}"
+
+    - name: Verify Nginx .tar file signature
+      shell: cd /opt/ && gpg --verify nginx-{{ nginx_version.stdout }}.tar.gz.asc  nginx-{{ nginx_version.stdout }}.tar.gz
+      register: result
+      ignore_errors: yes
+
+    - debug:
+        msg: "{{result}}"
+
+
+## ================ Nginx gpg verifications  Done ============================
+
+       
+    - name: Clone SpiderLabs/modsecurity && ModSecurity directory and compile the source code
+      shell: |
+        cd /opt
+        git clone --depth 1 -b v3/master --single-branch https://github.com/SpiderLabs/ModSecurity 
+        cd ModSecurity
+        git submodule init
+        git submodule update
+        ./build.sh
+        ./configure
+        make
+        make install
+        cd ~
+    - name: Download the Nginx Connector for ModSecurity and Compile it as a Dynamic Modules
+      shell: |
+        cd /opt
+        git clone --depth 1 https://github.com/SpiderLabs/ModSecurity-nginx.git
+        cd ~
+    - name: Compiling Nginx with ModeSecurity Connector
+      shell: |
+        cd /opt/nginx-{{nginx_version.stdout}}
+        ./configure --add-dynamic-module=../ModSecurity-nginx --sbin-path=/usr/sbin/nginx --conf-path=/etc/nginx/nginx.conf --pid-path=/var/run/nginx.pid
+        make 
+        make install  
+        cd ~
+      become: yes
+
+
+    - name: Commands create modules file and copy past
+      shell: |
+        mkdir -p /etc/nginx/modules
+        cd /opt/nginx-{{ nginx_version.stdout }}/objs
+        cp ngx_http_modsecurity_module.so  /etc/nginx/modules
+        cd ~
+    - name: check nginx test
+      shell: nginx -t
+      register: nginx_test
+
+    - debug:
+        msg: "nginx test {{nginx_test}}"     
+
+    - name: Downloading Rules for ModSecurity
+      shell: |
+        mkdir -p /etc/nginx/modsec
+        cd /opt/ModSecurity
+        cp modsecurity.conf-recommended unicode.mapping /etc/nginx/modsec/
+        cd ~
+    - name: Nginx Configurations
+      shell: |
+        cd /etc/nginx/modsec
+        mv modsecurity.conf-recommended modsecurity.conf
+        sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/' modsecurity.conf
+        cd ~
+    
+    - name: Download coreruleset rules
+      shell: |
+        cd /usr/local/
+        git clone https://github.com/coreruleset/coreruleset.git
+        cd coreruleset
+        cp crs-setup.conf.example crs-setup.conf
+        cd rules/
+        mv REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf.example REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf
+        mv RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf.example RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf
+        cd ~
+    - name: Configure rules with content
+      copy:
+        dest: /etc/nginx/modsec/main.conf
+        content: |
+            # From https://github.com/SpiderLabs/ModSecurity/blob/master/
+            # modsecurity.conf-recommended
+            #
+            # Edit to set SecRuleEngine On
+            Include /etc/nginx/modsec/modsecurity.conf
+            Include /usr/local/coreruleset/crs-setup.conf
+            Include /usr/local/coreruleset/rules/*.conf
+            # Basic test rule
+            SecRule ARGS:testparam "@contains test" "id:1234,deny,status:403"
+    - name: Add new line load_module /etc/nginx/modules/ngx_http_modsecurity_module.so; in nginx.conf file
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        line: 'load_module /etc/nginx/modules/ngx_http_modsecurity_module.so;'
+        insertbefore: 'events {'
+
+## changes 
+
+    - name: Add ModeSecurity On
+      lineinfile:
+        path: /etc/nginx/sites-available/default
+        line: '        modsecurity on;'
+        insertbefore: 'root /var/www/html;'
+
+    - name: Add modsecurity_rules_file /etc/nginx/modsec/main.conf
+      lineinfile:
+        path: /etc/nginx/sites-available/default
+        line: '        modsecurity_rules_file /etc/nginx/modsec/main.conf;'
+        insertafter: 'modsecurity on;'
+    
+    - name: Restart Nginx
+      service: name=nginx state=restarted
+      when: nginx_test.rc == 0
+      register: restrarting_nginx_log
+
+    - debug:
+        msg: "{{restrarting_nginx_log}}"
+  
+# test
+# curl 'localhost/?val=<script>alert(1)</script>'
+# ansible-playbook -e "nginx_version=1.20.1" final-centos-modsecurity.yml -
