@@ -13,7 +13,7 @@
       
     - name: Check Nginx Version
       become: yes
-      shell: nginx -v 2>&1 | awk -F '/' '{print $2}'
+      shell: nginx -v 2>&1 | awk -F' ' '{print $3}' | cut -d / -f 2
       register: nginx_version
 
     # - name: Check Nginx Version 1
@@ -53,7 +53,7 @@
       shell: |
         cd /opt
         rm -rf ModSecurity-nginx nginx-{{ nginx_version }} nginx-{{ nginx_version }}.tar.gz
-        rm -rf ModSecurity
+      #  rm -rf ModSecurity
         
     - name: cleanUP /etc/nginx/modsec and modules file
       shell: |
@@ -81,7 +81,7 @@
     - name: check RSA id
       shell: |
         cd /opt/
-        gpg nginx-{{ nginx_version.stdout }}.tar.gz.asc 2>&1 | awk -F 'ID' '{print $2}'
+        gpg nginx-{{ nginx_version.stdout }}.tar.gz.asc 2>&1 | awk -F 'RSA key ' '{print $2}' | sed -n '/^$/!p'
         cd ~
       register: gpg_id
       
@@ -93,10 +93,12 @@
         cd /opt/
         gpg --recv-keys --keyserver keyserver.ubuntu.com {{ gpg_id.stdout }}
         cd ~
-      register: mykeys
+    #   register: recv-keys
+    #   ignore_errors: yes
 
-    - debug:
-        msg: "{{ mykeys }}"
+
+    # - debug:
+    #     msg: "{{ recv-keys }}"
 
     - name: Verify Nginx .tar file signature
       shell: cd /opt/ && gpg --verify nginx-{{ nginx_version.stdout }}.tar.gz.asc  nginx-{{ nginx_version.stdout }}.tar.gz
@@ -122,20 +124,22 @@
         make
         make install
         cd ~
+
     - name: Download the Nginx Connector for ModSecurity and Compile it as a Dynamic Modules
       shell: |
         cd /opt
         git clone --depth 1 https://github.com/SpiderLabs/ModSecurity-nginx.git
         cd ~
+
+        
     - name: Compiling Nginx with ModeSecurity Connector
       shell: |
         cd /opt/nginx-{{nginx_version.stdout}}
-        ./configure --add-dynamic-module=../ModSecurity-nginx --sbin-path=/usr/sbin/nginx --conf-path=/etc/nginx/nginx.conf --pid-path=/var/run/nginx.pid
+        ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx
         make 
-        make install  
+        make install
+        make modules
         cd ~
-      become: yes
-
 
     - name: Commands create modules file and copy past
       shell: |
@@ -143,9 +147,12 @@
         cd /opt/nginx-{{ nginx_version.stdout }}/objs
         cp ngx_http_modsecurity_module.so  /etc/nginx/modules
         cd ~
+
     - name: check nginx test
       shell: nginx -t
       register: nginx_test
+      ignore_errors: yes
+
 
     - debug:
         msg: "nginx test {{nginx_test}}"     
