@@ -1,6 +1,9 @@
-# ModSecurity
+# ModSecurity With Nginx
 
-![image](https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/others/modsec.png)
+<!--
+<p align="center"> Nginx  <img src="https://raw.githubusercontent.com/github/explore/85cceaeeaf993ca35664dc37ea24f9237fbbfc14/topics/nginx/nginx.png" alt="nginx" title="nginx" width="40" height="40"/> </p>
+-->
+
 
 ModSecurity is an open-source web-based firewall application (or WAF) supported by different web servers: Apache, Nginx and IIS. The module is configured to protect web applications from various attacks. ModSecurity supports flexible rule engine to perform both simple and complex operations.
 
