@@ -37,18 +37,22 @@ ModSecurity is an open-source web-based firewall application (or WAF) supported 
          ansible_ssh_pass=ENTER-PASSWORD
 
 
-6. Run ansible playbook on 'Ubuntu Server' used this command.
+6. Run ansible playbook on `Ubuntu Server` used this command.
 
 
          ansible-playbook -i hosts modsecurity_with_nginx_ubuntu.yml
+
    
-7. Run ansible playbook on 'CentOS Server' used this command.
+   
+8. Run ansible playbook on `CentOS Server` used this command.
 
 
          ansible-playbook -i hosts modsecurity_with_nginx_centos_7.yml
 
+   
 
-8. Run ansible playbook with sudo password use -k and -K Eg.
+
+10. Run ansible playbook with sudo password use -k and -K Eg.
 
          
          ansible-playbook -i hosts trivy_automation.yml -k
